@@ -19,3 +19,9 @@ ratatui = "0.30"
 [features]
 default = ["mmap"]
 mmap = ["dep:memmap2"]
+
+[profile.dev.package.rpf9]
+opt-level = 2
+
+[profile.test.package.rpf9]
+opt-level = 2

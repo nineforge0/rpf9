@@ -178,7 +178,15 @@ impl<'a> Scan<'a> {
     /// spans inside archive bodies, joins resource chunks, and accounts for
     /// every byte.
     pub fn new(data: &'a [u8]) -> Self {
-        let mut pieces = recognized(data);
+        Self::try_new_with_progress(data, |_, _| true).expect("scan is never cancelled")
+    }
+
+    pub fn try_new_with_progress<F>(data: &'a [u8], mut progress: F) -> Option<Self>
+    where
+        F: FnMut(u64, u64) -> bool,
+    {
+        let total = data.len() as u64;
+        let mut pieces = recognized(data, &mut progress, total)?;
         let known: Vec<_> = pieces.iter().map(|piece| piece.span.clone()).collect();
         let archives = archive::discover(data, &known);
         pieces.extend(stored(data, &archives, &known));
@@ -192,12 +200,15 @@ impl<'a> Scan<'a> {
                 .map(|archive| archive.header.at);
         }
         let coverage = coverage(data, &archives, &files);
-        Self {
+        if !progress(total, total) {
+            return None;
+        }
+        Some(Self {
             data,
             archives,
             files,
             coverage,
-        }
+        })
     }
 
     pub fn data(&self) -> &'a [u8] {
@@ -226,10 +237,24 @@ impl<'a> Scan<'a> {
 }
 
 /// Byte-scans for media signatures and zlib streams.
-fn recognized(data: &[u8]) -> Vec<CarvedFile> {
+fn recognized<F>(data: &[u8], progress: &mut F, total: u64) -> Option<Vec<CarvedFile>>
+where
+    F: FnMut(u64, u64) -> bool,
+{
+    const REPORT: usize = 1 << 20;
+    if !progress(0, total) {
+        return None;
+    }
     let mut inflater = Inflater::new();
     let (mut pieces, mut at) = (Vec::new(), 0);
+    let mut next_report = REPORT;
     while at < data.len() {
+        if at >= next_report {
+            if !progress(at as u64, total) {
+                return None;
+            }
+            next_report = at.saturating_add(REPORT);
+        }
         let rest = &data[at..];
         let (len, inflated, kind) = if let Some((len, media)) = carve::probe(rest) {
             (len, None, FileKind::Known(media))
@@ -242,7 +267,7 @@ fn recognized(data: &[u8]) -> Vec<CarvedFile> {
         pieces.push(CarvedFile::new(at..at + len, inflated, kind));
         at += len;
     }
-    pieces
+    Some(pieces)
 }
 
 /// Classifies inflated content by signature.

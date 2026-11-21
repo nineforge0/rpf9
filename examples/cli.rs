@@ -34,12 +34,12 @@ struct Cli {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
-    let data = fs::read(&cli.archive)?;
-    let scan = Scan::new(&data);
+    let file = rpf9::MappedFile::open(&cli.archive)?;
+    let scan = Scan::new(file.as_slice());
     report(&cli.archive, &scan);
 
     if let Some(dir) = &cli.extract {
-        extract(&scan, &data, dir)?;
+        extract(&scan, dir)?;
     }
     if let Some(path) = &cli.write {
         let archive = scan
@@ -112,12 +112,12 @@ fn report(path: &Path, scan: &Scan<'_>) {
     );
 }
 
-fn extract(scan: &Scan<'_>, data: &[u8], dir: &Path) -> Result<(), Box<dyn Error>> {
+fn extract(scan: &Scan<'_>, dir: &Path) -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(dir)?;
     for (index, file) in scan.files().iter().enumerate() {
         let name = format!("{index:04}_{:08x}.{}", file.span.start, file.kind.ext());
         let path = dir.join(name);
-        let bytes = file.read_to_vec(data)?;
+        let bytes = file.read_to_vec(scan.data())?;
         fs::write(&path, &bytes)?;
         println!("wrote {} ({} bytes)", path.display(), bytes.len());
     }

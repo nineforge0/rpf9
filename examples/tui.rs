@@ -2,6 +2,7 @@
 //!
 //! ```sh
 //! cargo run --example tui -- path/to/archive.rpf
+//! cargo run --example tui -- path/to/archive.rpf --out extracted
 //! ```
 
 use clap::Parser;
@@ -11,13 +12,17 @@ use ratatui::{
     layout::{Constraint, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, Gauge, List, ListItem, ListState, Paragraph, Wrap},
 };
 use rpf9::{CarvedFile, Coverage, FileKind, Header, Scan};
 use std::collections::BTreeSet;
 use std::fs;
 use std::ops::Range;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 const TEXT_LIMIT: u64 = 1 << 20;
 const TEXT_LINES: usize = 2000;
@@ -56,14 +61,107 @@ struct Args {
 
 fn main() -> std::io::Result<()> {
     let args = Args::parse();
-    let data = std::fs::read(&args.archive)?;
-    let scan = Scan::new(&data);
-    let mut app = App::new(args.archive.display().to_string(), &scan, args.out);
+    let file = rpf9::MappedFile::open(&args.archive)?;
+    let name = args.archive.display().to_string();
+    let out = args.out;
+    let data = file.as_slice();
+    let total = data.len() as u64;
 
     let mut terminal = ratatui::init();
-    let result = app.run(&mut terminal);
+    let cancelled = AtomicBool::new(false);
+    let result = thread::scope(|scope| -> std::io::Result<()> {
+        let cancel_flag = &cancelled;
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let handle = scope.spawn(move || {
+            Scan::try_new_with_progress(data, |done, total| {
+                let _ = sender.try_send((done, total));
+                !cancel_flag.load(Ordering::Relaxed)
+            })
+        });
+
+        let started = Instant::now();
+        let (mut done, mut seen_total) = (0u64, total);
+        let mut cancelling = false;
+        while !handle.is_finished() {
+            while let Ok((at, end)) = receiver.try_recv() {
+                done = at;
+                seen_total = end;
+            }
+            terminal.draw(|frame| {
+                render_scan(
+                    frame,
+                    &name,
+                    done,
+                    seen_total,
+                    started.elapsed(),
+                    cancelling,
+                )
+            })?;
+            if event::poll(Duration::from_millis(50))?
+                && let Event::Key(key) = event::read()?
+                && key.kind == KeyEventKind::Press
+                && matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
+            {
+                cancelled.store(true, Ordering::Relaxed);
+                cancelling = true;
+            }
+        }
+
+        let scan = handle.join().expect("scan thread panicked");
+        let Some(scan) = scan else {
+            return Ok(());
+        };
+        let mut app = App::new(name, &scan, out);
+        app.run(&mut terminal)
+    });
     ratatui::restore();
     result
+}
+
+fn render_scan(
+    frame: &mut Frame,
+    name: &str,
+    done: u64,
+    total: u64,
+    elapsed: Duration,
+    cancelling: bool,
+) {
+    let [gauge_area, footer_area] =
+        Layout::vertical([Constraint::Min(3), Constraint::Length(1)]).areas(frame.area());
+    let ratio = if total == 0 {
+        0.0
+    } else {
+        (done as f64 / total as f64).clamp(0.0, 1.0)
+    };
+    let seconds = elapsed.as_secs_f64().max(0.001);
+    let speed = done as f64 / seconds;
+    let eta = if speed > 1.0 {
+        total.saturating_sub(done) as f64 / speed
+    } else {
+        0.0
+    };
+    let gauge = Gauge::default()
+        .block(Block::bordered().title(format!(" scanning {name} ")))
+        .gauge_style(Style::new().fg(Color::Cyan))
+        .ratio(ratio)
+        .label(format!(
+            "{:.1}% · {} / {} · {}/s · ETA {:.0}s",
+            ratio * 100.0,
+            human(done),
+            human(total),
+            human(speed as u64),
+            eta
+        ));
+    frame.render_widget(gauge, gauge_area);
+    let footer = if cancelling {
+        " cancelling…"
+    } else {
+        " q/esc cancel"
+    };
+    frame.render_widget(
+        Paragraph::new(footer).style(Style::new().fg(Color::DarkGray)),
+        footer_area,
+    );
 }
 
 struct ArchiveRow {

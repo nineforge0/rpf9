@@ -65,10 +65,14 @@ impl<'a> Archive<'a> {
 pub(crate) fn discover<'a>(data: &'a [u8], known: &[Range<usize>]) -> Vec<Archive<'a>> {
     let mut headers = Vec::new();
     let mut at = 0;
+    debug_assert!(known.windows(2).all(|pair| pair[0].end <= pair[1].start));
+    let mut covered = 0;
     while at < data.len() {
-        if !known.iter().any(|range| range.contains(&at))
-            && let Ok(header) = Header::parse(data, at)
-        {
+        while covered < known.len() && known[covered].end <= at {
+            covered += 1;
+        }
+        let inside = known.get(covered).is_some_and(|range| range.contains(&at));
+        if !inside && let Ok(header) = Header::parse(data, at) {
             headers.push(header);
         }
         at = match at.checked_add(SECTOR_SIZE) {
