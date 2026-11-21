@@ -1,0 +1,21 @@
+[package]
+name = "rpf9"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Implementation of a certain archive format in Rust."
+
+[dependencies]
+flate2 = { version = "1", default-features = false, features = [
+    "rust_backend",
+] }
+thiserror = "2"
+memmap2 = { version = "0.9", optional = true }
+
+[dev-dependencies]
+clap = { version = "4", features = ["derive"] }
+ratatui = "0.30"
+
+[features]
+default = ["mmap"]
+mmap = ["dep:memmap2"]
