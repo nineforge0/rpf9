@@ -8,14 +8,8 @@ pub enum Error {
     InvalidLayout { reason: &'static str },
     #[error("zlib stream at {at:#x}: {message}")]
     Zlib { at: usize, message: String },
-    #[error("inflated size mismatch at {at:#x}: expected {expected} bytes, got {actual}")]
-    InflatedSize {
-        at: usize,
-        expected: u64,
-        actual: u64,
-    },
-    #[error("entry is too large for memory: {size} bytes")]
-    TooLarge { size: u64 },
+    #[error("no embedded table key matches key slot {index}")]
+    UnknownKey { index: usize },
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;

@@ -1,9 +1,9 @@
 [package]
 name = "rpf9"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
-description = "Implementation of a certain archive format in Rust."
+description = "RPF9 archive reader"
 
 [dependencies]
 flate2 = { version = "1", default-features = false, features = [

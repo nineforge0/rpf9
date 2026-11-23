@@ -15,6 +15,11 @@ impl MappedFile {
     pub fn as_slice(&self) -> &[u8] {
         &self.map
     }
+
+    /// Parses this mapping as an RPF9 archive.
+    pub fn parse(&self) -> crate::Result<crate::Rpf<'_>> {
+        crate::Rpf::parse(self.as_slice())
+    }
 }
 
 impl AsRef<[u8]> for MappedFile {
